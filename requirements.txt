@@ -1,0 +1,6 @@
+numpy
+Pillow
+psutil
+torch
+torchvision
+matplotlib
