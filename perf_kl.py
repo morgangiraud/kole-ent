@@ -25,6 +25,11 @@ for device in devices:
         for use_triton in use_tritons:
             if device == "cpu" and use_triton is True:
                 continue
+
+            # TODO: understand why this doesn't work
+            if compile is True and use_triton is True:
+                continue
+
             for nb_samples in sizes:
                 sub_label = f"{device}, compiled:{compile}, use_triton: {use_triton}, N:{nb_samples}"
                 x = D.Uniform(

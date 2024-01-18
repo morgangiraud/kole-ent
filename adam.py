@@ -26,7 +26,7 @@ seed_everything(609)  # hard seed
 nb_density = 9
 
 p = mixture_normal(nb_density, device=device)
-kl_hat = build_kl_hat(p, compile=True)
+kl_hat = build_kl_hat(p, compile=True, use_triton=False)
 
 # Sample data from the distributions
 target_data = p.sample((nb_density * 100,))
