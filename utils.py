@@ -5,32 +5,25 @@ import torch
 from torch import distributions as D
 
 
-def ent_hat(X):
-    """
-    Kozachenko-Leonenko estimator
-    More here: https://arxiv.org/abs/1602.07440
-    """
-    N, D = X.shape
-
-    dist_sq = torch.sum((X[:, None, :] - X[None, :, :]) ** 2, axis=-1)
-
-    dist_sq[torch.eye(N, dtype=torch.bool, device=X.device)] = torch.inf
-
-    min_dist = torch.sqrt(torch.min(dist_sq, 1).values)
-
-    return torch.mean(torch.log((N - 1) * min_dist**D))
-
-
-def build_kl_hat(p, compile=True):
+def build_kl_hat(p, compile=True, use_triton=True):
     """
     D_kl(p||q) = H(p, q) - H(q)
     X ~ q
     """
+    if torch.cuda.is_available() and use_triton:
+        from ent_triton import ent_hat_triton
 
-    def kl_hat(X):
-        neg_log_p_X = -p.log_prob(X)
-        # We approximate q by the uniform distribution
-        return torch.mean(neg_log_p_X) - ent_hat(X)
+        def kl_hat(X):
+            neg_log_p_X = -p.log_prob(X)
+            # We approximate q by the uniform distribution
+            return torch.mean(neg_log_p_X) - ent_hat_triton(X)
+    else:
+        from ent import ent_hat
+
+        def kl_hat(X):
+            neg_log_p_X = -p.log_prob(X)
+            # We approximate q by the uniform distribution
+            return torch.mean(neg_log_p_X) - ent_hat(X)
 
     if compile is True:
         return torch.compile(kl_hat)

@@ -32,9 +32,9 @@ kl_hat = build_kl_hat(p, compile=True)
 target_data = p.sample((nb_density * 100,))
 
 nb_samples = 2**10
-init_sample = D.Uniform(
-    torch.tensor([0.0, 0.0], device=device), torch.tensor([1.0, 1.0], device=device)
-).sample((nb_samples,))
+init_sample = D.Uniform(torch.tensor([0.0, 0.0], device=device), torch.tensor([1.0, 1.0], device=device)).sample(
+    (nb_samples,)
+)
 
 # Plotting the data
 plt.figure(figsize=(8, 6))
@@ -67,9 +67,7 @@ plt.close()
 step_per_video_frame = 5
 X = torch.nn.Parameter(init_sample.clone())
 optimizer = torch.optim.SGD([X], lr=2e-1, momentum=0, weight_decay=0)
-scheduler = torch.optim.lr_scheduler.MultiStepLR(
-    optimizer, milestones=[2500, 4000], gamma=0.3
-)
+scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2500, 4000], gamma=0.3)
 recorded_positions = []
 recorded_ent = []
 nb_epoch = 5000
@@ -92,14 +90,10 @@ for i in range(nb_epoch):
 print(f"Time taken by the optimization process: {time.time() - t0}")
 
 # Creating the animation
-fig, axs = plt.subplots(
-    1, 2, figsize=(20 / 2, 10 / 2), dpi=48
-)  # 960x480 for 2 subplots
+fig, axs = plt.subplots(1, 2, figsize=(20 / 2, 10 / 2), dpi=48)  # 960x480 for 2 subplots
 
 # Scatter plot for the particles
-axs[0].scatter(
-    target_data[:, 0].cpu().numpy(), target_data[:, 1].cpu().numpy(), alpha=0.4
-)
+axs[0].scatter(target_data[:, 0].cpu().numpy(), target_data[:, 1].cpu().numpy(), alpha=0.4)
 scat = axs[0].scatter(
     init_sample[:, 0].cpu().numpy(),
     init_sample[:, 1].cpu().numpy(),
@@ -130,9 +124,7 @@ print("Dumping video of the optimization process")
 
 
 t0 = time.time()
-ani = FuncAnimation(
-    fig, update, frames=range(len(recorded_ent)), repeat=False, blit=True
-)
+ani = FuncAnimation(fig, update, frames=range(len(recorded_ent)), repeat=False, blit=True)
 f = os.path.join(RESULT_DIR, "gd.mp4")
 writervideo = FFMpegWriter(fps=30)
 ani.save(f, writer=writervideo)

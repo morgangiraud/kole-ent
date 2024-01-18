@@ -71,6 +71,7 @@ dependencies:
   - python_abi=3.10=4_cp310
   - pytorch=2.1.0=cpu_mkl_py310h1822dd0_102
   - readline=8.2=h9e318b2_1
+  - ruff=0.1.13=py310h18fe299_1
   - setuptools=69.0.3=pyhd8ed1ab_0
   - six=1.16.0=pyh6c4a22f_0
   - sleef=3.5.1=h6db0672_2
