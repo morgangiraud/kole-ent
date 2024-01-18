@@ -64,10 +64,11 @@ plt.close()
 # Gradient descent
 #####################################
 
+step_per_video_frame = 4
 X = torch.nn.Parameter(init_sample.clone())
 optimizer = torch.optim.Adam([X], lr=2e-1)
 scheduler = torch.optim.lr_scheduler.MultiStepLR(
-    optimizer, milestones=[500, 1000], gamma=0.5
+    optimizer, milestones=[500, 1000], gamma=0.3
 )
 recorded_positions = []
 recorded_ent = []
@@ -78,7 +79,7 @@ for i in range(nb_epoch):
 
     kl_loss = kl_hat(X)
 
-    if i % 1 == 0:
+    if i % step_per_video_frame == 0:
         recorded_ent.append(kl_loss.item())
         recorded_positions.append(X.cpu().detach().clone())
 
@@ -91,7 +92,10 @@ for i in range(nb_epoch):
 print(f"Time taken by the optimization process: {time.time() - t0}")
 
 # Creating the animation
-fig, axs = plt.subplots(1, 2, figsize=(8, 3))
+fig, axs = plt.subplots(
+    1, 2, figsize=(20 / 2, 10 / 2), dpi=48
+)  # 960x480 for 2 subplots
+fig.tight_layout()
 
 # Scatter plot for the particles
 axs[0].scatter(
@@ -107,7 +111,7 @@ scat = axs[0].scatter(
 # Line plot for the entropy
 (line,) = axs[1].plot([], [], lw=2)
 axs[1].set_yscale("log")
-axs[1].set_xlim(0, len(recorded_ent))
+axs[1].set_xlim(0, len(recorded_ent) * step_per_video_frame)
 axs[1].set_ylim(10**-1, 10**2)
 axs[1].set_title("KL over Iterations")
 axs[1].set_xlabel("Iteration")
@@ -116,7 +120,10 @@ axs[1].set_ylabel("Entropy")
 
 def update(frame):
     scat.set_offsets(recorded_positions[frame])
-    line.set_data(range(frame + 1), recorded_ent[: frame + 1])
+    line.set_data(
+        range(0, (frame + 1) * step_per_video_frame, step_per_video_frame),
+        recorded_ent[: frame + 1],
+    )
     return scat, line
 
 
@@ -124,8 +131,10 @@ print("Dumping video of the optimization process")
 
 
 t0 = time.time()
-ani = FuncAnimation(fig, update, frames=range(len(recorded_ent)))
+ani = FuncAnimation(
+    fig, update, frames=range(len(recorded_ent)), repeat=False, blit=True
+)
 f = os.path.join(RESULT_DIR, "gd-adam.mp4")
-writervideo = FFMpegWriter(fps=60)
+writervideo = FFMpegWriter(fps=30)
 ani.save(f, writer=writervideo)
 print(f"Time taken to dump the video: {time.time() - t0}")

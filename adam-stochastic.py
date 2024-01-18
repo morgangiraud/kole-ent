@@ -57,27 +57,34 @@ plt.ylabel("Y-axis")
 plt.legend()
 plt.grid(True)
 plt.axis("equal")
-plt.savefig(os.path.join(RESULT_DIR, "gd-init.png"))
+plt.savefig(os.path.join(RESULT_DIR, "gd-adam-stoc-init.png"))
 plt.close()
 
 #####################################
-# Gradient descent
+# Stochastic Gradient descent
 #####################################
 
-step_per_video_frame = 5
+step_per_video_frame = 3
 X = torch.nn.Parameter(init_sample.clone())
-optimizer = torch.optim.SGD([X], lr=2e-1, momentum=0, weight_decay=0)
+optimizer = torch.optim.Adam([X], lr=2e-1)
 scheduler = torch.optim.lr_scheduler.MultiStepLR(
-    optimizer, milestones=[2500, 4000], gamma=0.3
+    optimizer, milestones=[500 * 2, 1000 * 2], gamma=0.3
 )
 recorded_positions = []
 recorded_ent = []
-nb_epoch = 5000
+nb_epoch = 1500 * 2
 t0 = time.time()
+
+nb_elems_optimized = 32
+stoch_idx = torch.randperm(nb_samples, device=device)[:nb_elems_optimized]
+print(f"X.shape: {X.shape} -> X_stoc.shape: {X[stoch_idx].shape}")
 for i in range(nb_epoch):
     optimizer.zero_grad()
 
-    kl_loss = kl_hat(X)
+    stoch_idx = torch.randperm(nb_samples, device=device)[:nb_elems_optimized]
+    X_stoc = X[stoch_idx]
+
+    kl_loss = kl_hat(X_stoc)
 
     if i % step_per_video_frame == 0:
         recorded_ent.append(kl_loss.item())
@@ -133,7 +140,7 @@ t0 = time.time()
 ani = FuncAnimation(
     fig, update, frames=range(len(recorded_ent)), repeat=False, blit=True
 )
-f = os.path.join(RESULT_DIR, "gd.mp4")
+f = os.path.join(RESULT_DIR, "gd-adam-stoc.mp4")
 writervideo = FFMpegWriter(fps=30)
 ani.save(f, writer=writervideo)
 print(f"Time taken to dump the video: {time.time() - t0}")
