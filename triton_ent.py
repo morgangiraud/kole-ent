@@ -1,3 +1,4 @@
+from typing import Any
 import torch
 from torch import empty_strided
 from torch._inductor import triton_helpers
@@ -5,72 +6,20 @@ from torch._C import _cuda_getCurrentRawStream as get_cuda_stream
 import triton
 import triton.language as tl
 
-from ent import ent_hat
+from ent import kole_entropy
 from triton_dist_sq import compute_dist_sq_triton_
-from triton_min_dist import compute_min_dist_triton_
+from triton_min_dist import _kole_min_dist_forward, _kole_min_dist_backward
+from triton_mean_estimator import _kole_mean_estimator_forward, _kole_mean_estimator_backward
 
 assert_size_stride = torch._C._dynamo.guards.assert_size_stride
 
 
-@triton.jit
-def compute_mean_estimator_triton_(in_ptr0, out_ptr0, N, D, rnumel, RBLOCK: tl.constexpr):
-    acc = tl.full([RBLOCK], 0, tl.float32)
-    rbase = tl.arange(0, RBLOCK)
-    for roffset in range(0, rnumel, RBLOCK):
-        rindex = roffset + rbase
-        rmask = rindex < rnumel
+class KoleEntropy(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        N, D = x.shape
 
-        data = tl.load(in_ptr0 + rindex, rmask, other=0)
-
-        log_data = tl.log((N - 1) * tl.math.pow(data, D))
-        acc = tl.where(rmask, acc + log_data, acc)
-
-    acc_sumed = tl.sum(acc, 0)
-    mean_acc = acc_sumed / N
-
-    tl.store(out_ptr0, mean_acc)
-
-
-def compute_mean_estimator_triton(min_dist, D):
-    N = min_dist.shape[0]
-
-    assert_size_stride(min_dist, (N,), (1,))
-
-    with torch.cuda._DeviceGuard(0):
-        torch.cuda.set_device(0)  # no-op to ensure context
-
-        out = empty_strided((), (), device="cuda", dtype=torch.float32)
-        rnumel = N
-
-        # Meta parameters
-        RBLOCK = min(triton.next_power_of_2(rnumel), 1024)
-        num_warps = 2
-        g = (1 + (rnumel - 1) // RBLOCK, 1, 1)
-
-        stream0 = get_cuda_stream(0)
-
-        compute_mean_estimator_triton_[g](
-            min_dist,
-            out,
-            N,
-            D,
-            rnumel,
-            # Meta parameters
-            RBLOCK=RBLOCK,
-            num_warps=num_warps,
-            stream=stream0,
-        )
-
-        return out
-
-
-def ent_hat_triton(x):
-    N, D = x.shape
-
-    assert_size_stride(x, (N, D), (D, 1))
-
-    with torch.cuda._DeviceGuard(0):
-        torch.cuda.set_device(0)  # no-op to ensure context
+        assert_size_stride(x, (N, D), (D, 1))
 
         dist_sq = empty_strided((N, N), (N, 1), device="cuda", dtype=torch.float32)
         xnumel = N * N
@@ -112,7 +61,7 @@ def ent_hat_triton(x):
         g = (1 + (xnumel - 1) // XBLOCK, 1, 1)
 
         # Allocate the second output
-        compute_min_dist_triton_[g](
+        _kole_min_dist_forward[g](
             dist_sq,
             min_dist,
             N,
@@ -125,16 +74,16 @@ def ent_hat_triton(x):
         )
         del dist_sq
 
-        out = empty_strided((), (), device="cuda", dtype=torch.float32)
+        entropy = empty_strided((), (), device="cuda", dtype=torch.float32)
         rnumel = N
 
         # Meta parameters
         RBLOCK = min(triton.next_power_of_2(rnumel), 1024)
         num_warps = 2
         g = (1 + (rnumel - 1) // RBLOCK, 1, 1)
-        compute_mean_estimator_triton_[g](
+        _kole_mean_estimator_forward[g](
             min_dist,
-            out,
+            entropy,
             N,
             D,
             rnumel,
@@ -143,8 +92,25 @@ def ent_hat_triton(x):
             num_warps=num_warps,
             stream=stream0,
         )
+        del min_dist
 
-        return out
+        ctx.N = N
+        ctx.D = D
+        ctx.num_warps = num_warps
+
+        return entropy
+
+    @staticmethod
+    def backward(ctx, entropy_grad):
+        N = ctx.N
+        D = ctx.D
+        assert_size_stride(entropy_grad, (), ())
+
+        pass
+
+
+def kole_entropy_triton(x):
+    return KoleEntropy.apply(x)
 
 
 if __name__ == "__main__":
@@ -154,12 +120,21 @@ if __name__ == "__main__":
 
     print("Testing triton function...")
     for i in range(2, 12):
-        x = torch.randn(129, 2**i + 1, device="cuda")
+        N = 32
+        D = 2**i
 
-        y_triton = ent_hat_triton(x)
-        y_torch = ent_hat(x)
+        x_triton = torch.randn(N, N, device="cuda", requires_grad=True)
+        x_torch = x_triton.detach().clone()
+        x_torch.requires_grad = True
 
-        assert torch.allclose(y_triton, y_torch), (y_triton, y_torch)
+        loss_triton = kole_entropy_triton(x_triton)
+        loss_triton.backward()
+
+        loss_torch = kole_entropy(x_torch)
+        loss_torch.backward()
+
+        assert torch.allclose(loss_triton, loss_torch), (loss_triton, loss_torch)
+        assert torch.allclose(x_triton.grad, x_torch.grad), (x_triton.grad, x_torch.grad)
         print(f"input {2**i}: good")
 
     print("Triton function successfully tested!")

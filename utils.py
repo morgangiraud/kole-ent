@@ -55,10 +55,10 @@ def build_kl_hat(p, compile=True, use_triton=True):
     X ~ q
     """
     if torch.cuda.is_available() and use_triton:
-        from triton_ent import compute_mean_estimator_triton
         from triton_dist_sq import compute_dist_sq_triton
-        from triton_min_dist import _compute_min_dist_triton
-        from ent import _compute_min_dist, compute_dist_sq, compute_mean_estimator
+        from triton_min_dist import kole_min_dist_triton
+        from triton_mean_estimator import kole_mean_estimator_triton
+        from ent import compute_dist_sq, kole_min_dist, kole_mean_estimator, kole_entropy
 
         def kl_hat(X):
             neg_log_p_X = -p.log_prob(X)
@@ -66,11 +66,11 @@ def build_kl_hat(p, compile=True, use_triton=True):
             # dist_sq = compute_dist_sq_triton(X)
             dist_sq = compute_dist_sq(X)
 
-            # min_dist = _compute_min_dist_triton(dist_sq)
-            min_dist = _compute_min_dist(dist_sq)
+            # min_dist = kole_min_dist_triton(dist_sq)
+            min_dist = kole_min_dist(dist_sq)
 
-            # mean_est = compute_mean_estimator_triton(min_dist, X.shape[1])
-            mean_est = compute_mean_estimator(min_dist, X.shape[1])
+            # mean_est = kole_mean_estimator_triton(min_dist, X.shape[1])
+            mean_est = kole_mean_estimator(min_dist, X.shape[1])
 
             # We approximate q by the uniform distribution
             return torch.mean(neg_log_p_X) - mean_est

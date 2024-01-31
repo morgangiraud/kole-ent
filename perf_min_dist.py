@@ -1,8 +1,8 @@
 import torch
 import triton
 
-from ent import compute_min_dist
-from triton_min_dist import compute_min_dist_triton
+from ent import kole_min_dist
+from triton_min_dist import kole_min_dist_triton
 
 
 @triton.testing.perf_report(
@@ -22,19 +22,19 @@ from triton_min_dist import compute_min_dist_triton
         ],  # label name for the lines
         styles=[("blue", "-"), ("green", "-"), ("green", "--")],  # line styles
         ylabel="GB/s",  # label name for the y-axis
-        plot_name="compute_min_dist() performance (higher the better)",  # name for the plot. Used also as a file name.
-        args={"D": 256},  # values for function arguments not in `x_names` and `y_name`
+        plot_name="kole_min_dist() performance (higher the better)",  # name for the plot. Used also as a file name.
+        args={},  # values for function arguments not in `x_names` and `y_name`
     )
 )
-def benchmark(N, D, provider):
-    x = torch.randn(N, D, device="cuda", dtype=torch.float32)
+def benchmark(N, provider):
+    x = torch.randn(N, N, device="cuda", dtype=torch.float32) ** 2
     quantiles = [0.5, 0.2, 0.8]
     if provider == "torch-eager":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: compute_min_dist(x), quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: kole_min_dist(x), quantiles=quantiles)
     if provider == "torch-compile":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch.compile(compute_min_dist)(x), quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch.compile(kole_min_dist)(x), quantiles=quantiles)
     if provider == "triton":
-        ms, min_ms, max_ms = triton.testing.do_bench(lambda: compute_min_dist_triton(x), quantiles=quantiles)
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: kole_min_dist_triton(x), quantiles=quantiles)
 
     def gbps(ms):
         return 2 * x.nelement() * x.element_size() * 1e-9 / (ms * 1e-3)

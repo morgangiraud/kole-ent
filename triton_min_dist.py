@@ -1,26 +1,35 @@
 import torch
-from torch import empty_strided
-from torch._inductor import triton_helpers
 from torch._C import _cuda_getCurrentRawStream as get_cuda_stream
 import triton
 import triton.language as tl
 
-from ent import compute_min_dist
-from triton_dist_sq import compute_dist_sq_triton_
+from ent import kole_min_dist
 
 
 assert_size_stride = torch._C._dynamo.guards.assert_size_stride
 
 
 @triton.jit
-def compute_min_dist_triton_(in_ptr0, out_ptr0, N, xnumel, rnumel, XBLOCK: tl.constexpr, RBLOCK: tl.constexpr):
+def _kole_min_dist_forward(
+    dist_sq_ptr, min_dist_ptr, min_dist_sq_indices_ptr, N, xnumel, rnumel, XBLOCK: tl.constexpr, RBLOCK: tl.constexpr
+):
+    """
+    N = dist_sq_X.shape[0]
+    dist_sq_X[torch.eye(N, dtype=torch.bool, device=dist_sq_X.device)] = torch.inf  # N, N
+    min_values = torch.min(dist_sq_X, 1).values  # N
+    min_dist = torch.sqrt(min_values)
+
+    In our case, we also need to keep track of min dist indices for the backward pass
+    """
     # Compute output values offset
     xoffset = tl.program_id(0) * XBLOCK
-    xindex = xoffset + tl.arange(0, XBLOCK)[:, None]  # XBLOCK, 1
+    xindex = tl.expand_dims(xoffset + tl.arange(0, XBLOCK), 1)  # XBLOCK, 1
     xmask = xindex < xnumel
 
     min_acc = tl.full([XBLOCK, RBLOCK], float("inf"), tl.float32)
-    rbase = tl.arange(0, RBLOCK)[None, :]  # 1, RBLOCK
+    min_acc_indices = tl.full([XBLOCK, RBLOCK], -1, tl.float32)
+    xblock_zero = tl.zeros([XBLOCK, 1], tl.int32)
+    rbase = tl.expand_dims(tl.arange(0, RBLOCK), 0)  # 1, RBLOCK
     for roffset in range(0, rnumel, RBLOCK):
         rindex = roffset + rbase
         rmask = rindex < rnumel  # We guard against going out of the first dimension
@@ -31,40 +40,91 @@ def compute_min_dist_triton_(in_ptr0, out_ptr0, N, xnumel, rnumel, XBLOCK: tl.co
 
         in_ptrs = xindex * N + rindex  # outer + -> XBLOCK, RBLOCK
 
-        data = tl.load(in_ptr0 + in_ptrs, mask, other=float("inf"))
+        data = tl.load(dist_sq_ptr + in_ptrs, mask, other=float("inf"))
 
-        min_acc = triton_helpers.minimum(min_acc, data)
+        rindex_broadcasted = xblock_zero + rindex  # outer + -> XBLOCK, RBLOCK
+        min_choice = min_acc < data
+        min_acc = tl.where(min_choice, min_acc, data)
+        min_acc_indices = tl.where(min_choice, min_acc_indices, rindex_broadcasted)
 
-    min_dist_sq = triton_helpers.min2(min_acc, 1)[:, None]
+    min_dist_sq = tl.expand_dims(tl.min(min_acc, 1), 1)
+    min_acc_indices_index = tl.expand_dims(tl.argmin(min_acc, 1), 1)
+    min_dist_sq_indices = tl.expand_dims(
+        tl.sum(
+            tl.where(
+                min_acc_indices_index == tl.expand_dims(tl.arange(0, RBLOCK), 0),
+                min_acc_indices,
+                tl.zeros([XBLOCK, RBLOCK], tl.int32),
+            ),
+            1,
+        ),
+        1,
+    )
+
     min_dist = tl.sqrt(min_dist_sq)
 
-    tl.store(out_ptr0 + xindex, min_dist, xmask)
+    tl.store(min_dist_ptr + xindex, min_dist, xmask)
+    tl.store(min_dist_sq_indices_ptr + xindex, min_dist_sq_indices, xmask)
 
 
-def _compute_min_dist_triton(dist_sq):
-    N = dist_sq.shape[0]
+@triton.jit
+def _kole_min_dist_backward(
+    min_dist_grad_ptr,
+    dist_sq_grad_ptr,
+    min_dist_ptr,
+    min_dist_sq_indices_ptr,
+    xnumel,
+    rnumel,
+    XBLOCK: tl.constexpr,
+):
+    """
+    dist_sq[diag] = inf
+    min_dist_sq = min(dist_sq, axis=1)
+    min_dist = sqrt(min_dist_sq)
 
-    assert_size_stride(dist_sq, (N, N), (N, 1))
+    min_dist_sq_grad = 1/2 * 1/min_dist * min_dist_grad
+    The above value should be applied as a one hot vector row wise at the original min indices
+    """
 
-    with torch.cuda._DeviceGuard(0):
-        torch.cuda.set_device(0)  # no-op to ensure context
+    xindex = tl.program_id(0) * XBLOCK  # ()
+    xoffset = xindex + tl.arange(0, XBLOCK)  # (XBLOCK,)
+    xmask = xoffset < xnumel  # (XBLOCK,)
 
-        out = empty_strided((N,), (1,), device="cuda", dtype=torch.float32)
+    min_dist_grad = tl.load(min_dist_grad_ptr + xoffset, xmask, other=0)
+    min_dist = tl.load(min_dist_ptr + xoffset, xmask, other=float("inf"))
+
+    min_dist_sq_grad = 0.5 * (1 / min_dist)
+    dist_sq_grad = min_dist_sq_grad * min_dist_grad
+
+    min_dist_sq_indices = tl.load(min_dist_sq_indices_ptr + xoffset, xmask, other=0)
+
+    out_ptrs = xoffset * rnumel + min_dist_sq_indices
+    tl.store(dist_sq_grad_ptr + out_ptrs, dist_sq_grad, xmask)
+
+
+class KoleMinDist(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, dist_sq):
+        N = dist_sq.shape[0]
+
+        assert_size_stride(dist_sq, (N, N), (N, 1))
+
+        # Beware that memory location for those tensors might already contains some random/past data
+        min_dist = torch.empty_strided((N,), (1,), device="cuda", dtype=torch.float32)
+        min_dist_indices = torch.empty_strided((N,), (1,), device="cuda", dtype=torch.int32)
         xnumel = N
         rnumel = N
 
         # Meta parameters
         RBLOCK = min(triton.next_power_of_2(rnumel), 1024)
-        XBLOCK = 1 + (1024 - 1) // RBLOCK
+        XBLOCK = min(1 + (1024 - 1) // RBLOCK, triton.next_power_of_2(xnumel))
         num_warps = 2
         g = (1 + (xnumel - 1) // XBLOCK, 1, 1)
 
-        stream0 = get_cuda_stream(0)
-
-        # Allocate the second output
-        compute_min_dist_triton_[g](
+        _kole_min_dist_forward[g](
             dist_sq,
-            out,
+            min_dist,
+            min_dist_indices,
             N,
             xnumel,
             rnumel,
@@ -72,78 +132,51 @@ def _compute_min_dist_triton(dist_sq):
             XBLOCK=XBLOCK,
             RBLOCK=RBLOCK,
             num_warps=num_warps,
-            stream=stream0,
         )
-        del dist_sq
 
-        return out
+        ctx.XBLOCK = XBLOCK
+        ctx.RBLOCK = RBLOCK
+        ctx.num_warps = num_warps
+        ctx.g = g
 
+        ctx.save_for_backward(min_dist, min_dist_indices)
 
-def compute_min_dist_triton(x):
-    N, D = x.shape
+        return min_dist
 
-    assert_size_stride(x, (N, D), (D, 1))
+    @staticmethod
+    def backward(ctx, min_dist_grad):
+        min_dist, min_dist_indices = ctx.saved_tensors
+        N = min_dist.shape[0]
 
-    with torch.cuda._DeviceGuard(0):
-        torch.cuda.set_device(0)  # no-op to ensure context
+        try:
+            assert_size_stride(min_dist_grad, (N,), (1,))
+        except AssertionError:
+            min_dist_grad = min_dist_grad.clone()
+            assert_size_stride(min_dist_grad, (N,), (1,))
 
-        dist_sq = empty_strided((N, N), (N, 1), device="cuda", dtype=torch.float32)
-        xnumel = N * N
-        rnumel = D
+        assert_size_stride(min_dist, (N,), (1,))
+        assert_size_stride(min_dist_indices, (N,), (1,))
 
-        # Meta parameters
-        RBLOCK = min(triton.next_power_of_2(rnumel), 1024)
-        XBLOCK = 1 + (1024 - 1) // RBLOCK
-        num_warps = 2
-        g = (1 + (xnumel - 1) // XBLOCK, 1, 1)
-
-        # We sue a stream to make sure that are kernel calls are queued in FIFO
-        stream0 = get_cuda_stream(0)
-
-        compute_dist_sq_triton_[g](
-            x,
-            dist_sq,
-            N,
-            D,
-            xnumel,
-            rnumel,
-            # Meta parameters
-            XBLOCK=XBLOCK,
-            RBLOCK=RBLOCK,
-            num_warps=num_warps,
-            stream=stream0,
-        )
-        del x
-
-        # Separating the kernels into 2 function calls ensure that
-        # all the blocks have finished computed their work
-
-        out = empty_strided((N,), (1,), device="cuda", dtype=torch.float32)
+        dist_sq_grad = torch.zeros((N, N), device="cuda", dtype=torch.float32)
         xnumel = N
         rnumel = N
 
-        # Meta parameters
-        RBLOCK = min(triton.next_power_of_2(rnumel), 1024)
-        XBLOCK = 1 + (1024 - 1) // RBLOCK
-        num_warps = 2
-        g = (1 + (xnumel - 1) // XBLOCK, 1, 1)
-
-        # Allocate the second output
-        compute_min_dist_triton_[g](
-            dist_sq,
-            out,
-            N,
+        _kole_min_dist_backward[ctx.g](
+            min_dist_grad,
+            dist_sq_grad,
+            min_dist,
+            min_dist_indices,
             xnumel,
             rnumel,
-            # Meta parameters
-            XBLOCK=XBLOCK,
-            RBLOCK=RBLOCK,
-            num_warps=num_warps,
-            stream=stream0,
+            XBLOCK=ctx.XBLOCK,
+            num_warps=ctx.num_warps,
         )
-        del dist_sq
 
-        return out
+        return dist_sq_grad, None
+
+
+def kole_min_dist_triton(dist_sq):
+    return KoleMinDist.apply(dist_sq)
 
 
 if __name__ == "__main__":
@@ -153,12 +186,21 @@ if __name__ == "__main__":
 
     print("Testing triton function...")
     for i in range(2, 12):
-        x = torch.randn(129, 2**i + 1, device="cuda")
+        N = 2**i
 
-        y_triton = compute_min_dist_triton(x)
-        y_torch = compute_min_dist(x)
+        x_triton = torch.randn(N, N, device="cuda") ** 2
+        x_triton.requires_grad = True
+        x_torch = x_triton.detach().clone()
+        x_torch.requires_grad = True
 
-        assert torch.allclose(y_triton, y_torch), (y_triton, y_torch)
-        print(f"input {2**i}: good")
+        # we use the identity function for the parameter of the kole_min_dist so we don't pass a leaf Variable
+        loss_triton = torch.sum(kole_min_dist_triton(x_triton * 1.0))
+        loss_triton.backward()
 
+        loss_torch = torch.sum(kole_min_dist(x_torch * 1.0))
+        loss_torch.backward()
+
+        assert torch.allclose(loss_triton, loss_torch), (loss_triton, loss_torch, loss_triton - loss_torch)
+        assert torch.allclose(x_triton.grad, x_torch.grad), (x_triton.grad, x_torch.grad, x_triton.grad - x_torch.grad)
+        print(f"N: {N} -> good")
     print("Triton function successfully tested!")
