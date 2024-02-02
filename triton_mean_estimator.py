@@ -2,6 +2,7 @@ import torch
 import triton
 import triton.language as tl
 
+from utils import BLOCK_MAX_NB_THREADS
 from ent import kole_mean_estimator
 
 
@@ -33,7 +34,9 @@ def _kole_mean_estimator_forward(min_dist_ptr, mean_est_ptr, N, D, rnumel, RBLOC
 
 
 @triton.jit
-def _kole_mean_estimator_backward(grad_loss_ptr, grad_mind_dist_ptr, min_dist_ptr, N, D, rnumel, RBLOCK: tl.constexpr):
+def _kole_mean_estimator_backward(
+    grad_entropy_ptr, grad_mind_dist_ptr, min_dist_ptr, N, D, xnumel, XBLOCK: tl.constexpr
+):
     """
     x_pow = x ** D
     x_log = log( (N - 1) * x_pow)
@@ -49,13 +52,13 @@ def _kole_mean_estimator_backward(grad_loss_ptr, grad_mind_dist_ptr, min_dist_pt
     dloss/dx = 1 / N * 1 / (x ** D) * D * x ** (D - 1)
     dloss/dx = (D / N) * (1 / x)
     """
-    xoffset = tl.program_id(0) * RBLOCK
-    xindex = xoffset + tl.arange(0, RBLOCK)
-    xmask = xindex < rnumel
+    xoffset = tl.program_id(0) * XBLOCK
+    xindex = xoffset + tl.arange(0, XBLOCK)
+    xmask = xindex < xnumel
 
-    x = tl.load(min_dist_ptr + xindex, xmask, other=0)
-    dloss = tl.load(grad_loss_ptr)
-    min_dist_grad = (D / N) * (1 / x) * dloss
+    min_dist = tl.load(min_dist_ptr + xindex, xmask, other=0)
+    grad_entropy = tl.load(grad_entropy_ptr)
+    min_dist_grad = (D / N) * (1 / min_dist) * grad_entropy
 
     tl.store(grad_mind_dist_ptr + xindex, min_dist_grad, xmask)
 
@@ -98,22 +101,26 @@ class KoleMeanEstimator(torch.autograd.Function):
     def backward(ctx, grad_entropy):
         min_dist = ctx.saved_tensors[0]
         N = min_dist.shape[0]
+        D = ctx.D
 
         assert_size_stride(grad_entropy, (), ())
         assert_size_stride(min_dist, (N,), (1,))
 
         grad_mind_dist = torch.empty_strided((N,), (1,), device="cuda", dtype=torch.float32)
-        rnumel = N
+        xnumel = N
 
-        _kole_mean_estimator_backward[ctx.g](
+        XBLOCK = min(triton.next_power_of_2(xnumel), BLOCK_MAX_NB_THREADS)
+        g = (1 + (xnumel - 1) // XBLOCK, 1, 1)
+
+        _kole_mean_estimator_backward[g](
             grad_entropy,
             grad_mind_dist,
             min_dist,
             N,
-            ctx.D,
-            rnumel,
+            D,
+            xnumel,
             # Meta parameters
-            RBLOCK=ctx.RBLOCK,
+            XBLOCK=ctx.XBLOCK,
             num_warps=ctx.num_warps,
         )
 

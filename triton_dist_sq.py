@@ -82,8 +82,8 @@ def _kole_dist_sq_forward(x_ptr, dist_sq_ptr, N, D, xnumel, rnumel, XBLOCK: tl.c
 
 @triton.jit
 def _kole_dist_sq_backward(
-    dist_sq_grad_ptr,
-    x_grad_ptr,
+    grad_dist_sq_ptr,
+    grad_x_ptr,
     x_ptr,
     N,
     D,
@@ -124,19 +124,19 @@ def _kole_dist_sq_backward(
 
         mask = rmask & tl.expand_dims(xmask, 0)
         x_col = tl.load(x_ptr + (roffset * D + x_cols_index), mask, other=0)  # (RBLOCK, XBLOCK)
-        dist_sq_grad_row = tl.load(dist_sq_grad_ptr + x_rows_index * N + roffset, mask, other=0)  # Get lines
-        dist_sq_grad_col = tl.load(dist_sq_grad_ptr + roffset * N + x_rows_index, mask, other=0)  # Get cols
+        grad_dist_sq_row = tl.load(grad_dist_sq_ptr + x_rows_index * N + roffset, mask, other=0)  # Get lines
+        grad_dist_sq_col = tl.load(grad_dist_sq_ptr + roffset * N + x_rows_index, mask, other=0)  # Get cols
 
-        y_grad_add += dist_sq_grad_row + dist_sq_grad_col
-        x_y_grad_add += x_col * (dist_sq_grad_row + dist_sq_grad_col)
+        y_grad_add += grad_dist_sq_row + grad_dist_sq_col
+        x_y_grad_add += x_col * (grad_dist_sq_row + grad_dist_sq_col)
 
     x = tl.load(x_ptr + xoffset, xmask, other=0)  # (XBLOCK,)
 
     left = x * tl.sum(y_grad_add, 0)
     right = tl.sum(x_y_grad_add, 0)
-    x_grad = 2 * (left - right)  # (XBLOCK,)
+    grad_x = 2 * (left - right)  # (XBLOCK,)
 
-    tl.store(x_grad_ptr + xoffset, x_grad, xmask)
+    tl.store(grad_x_ptr + xoffset, grad_x, xmask)
 
 
 class KoleDistSQ(torch.autograd.Function):
@@ -201,12 +201,12 @@ class KoleDistSQ(torch.autograd.Function):
         return dist_sq
 
     @staticmethod
-    def backward(ctx, dist_sq_grad):
+    def backward(ctx, grad_dist_sq):
         x = ctx.saved_tensors[0]
         N = ctx.N
         D = ctx.D
 
-        # For some reason, dist_sq_grad is returned as a (N, N) tensor with strides (0, 0)
+        # For some reason, grad_dist_sq is returned as a (N, N) tensor with strides (0, 0)
         # Thanks to the interpret, we can see this error:
         #   RuntimeError: unsupported operation:
         #       more than one element of the written-to tensor refers to a single memory location.
@@ -216,12 +216,12 @@ class KoleDistSQ(torch.autograd.Function):
         #
         # This is efficient in the case that the tensor is sparse
         try:
-            assert_size_stride(dist_sq_grad, (N, N), (N, 1))
+            assert_size_stride(grad_dist_sq, (N, N), (N, 1))
         except AssertionError:
-            dist_sq_grad = dist_sq_grad.clone()
-            assert_size_stride(dist_sq_grad, (N, N), (N, 1))
+            grad_dist_sq = grad_dist_sq.clone()
+            assert_size_stride(grad_dist_sq, (N, N), (N, 1))
 
-        x_grad = torch.zeros(N, D, dtype=torch.float32, device="cuda")
+        grad_x = torch.zeros(N, D, dtype=torch.float32, device="cuda")
         xnumel = N * D
         rnumel = N
 
@@ -231,10 +231,10 @@ class KoleDistSQ(torch.autograd.Function):
         g = (nb_blocks, 1, 1)
 
         _kole_dist_sq_backward[g](
-            dist_sq_grad, x_grad, x, N, D, xnumel, rnumel, XBLOCK=XBLOCK, RBLOCK=RBLOCK, num_warps=ctx.num_warps
+            grad_dist_sq, grad_x, x, N, D, xnumel, rnumel, XBLOCK=XBLOCK, RBLOCK=RBLOCK, num_warps=ctx.num_warps
         )
 
-        return x_grad, None
+        return grad_x
 
 
 def kole_dist_sq_triton(x):

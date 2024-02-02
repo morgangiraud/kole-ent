@@ -1,5 +1,4 @@
 import torch
-from torch._C import _cuda_getCurrentRawStream as get_cuda_stream
 import triton
 import triton.language as tl
 
@@ -69,8 +68,8 @@ def _kole_min_dist_forward(
 
 @triton.jit
 def _kole_min_dist_backward(
-    min_dist_grad_ptr,
-    dist_sq_grad_ptr,
+    grad_min_dist_ptr,
+    grad_dist_sq_ptr,
     min_dist_ptr,
     min_dist_sq_indices_ptr,
     xnumel,
@@ -82,7 +81,7 @@ def _kole_min_dist_backward(
     min_dist_sq = min(dist_sq, axis=1)
     min_dist = sqrt(min_dist_sq)
 
-    min_dist_sq_grad = 1/2 * 1/min_dist * min_dist_grad
+    grad_min_dist_sq = 1/2 * 1/min_dist * grad_min_dist
     The above value should be applied as a one hot vector row wise at the original min indices
     """
 
@@ -90,16 +89,16 @@ def _kole_min_dist_backward(
     xoffset = xindex + tl.arange(0, XBLOCK)  # (XBLOCK,)
     xmask = xoffset < xnumel  # (XBLOCK,)
 
-    min_dist_grad = tl.load(min_dist_grad_ptr + xoffset, xmask, other=0)
+    grad_min_dist = tl.load(grad_min_dist_ptr + xoffset, xmask, other=0)
     min_dist = tl.load(min_dist_ptr + xoffset, xmask, other=float("inf"))
 
-    min_dist_sq_grad = 0.5 * (1 / min_dist)
-    dist_sq_grad = min_dist_sq_grad * min_dist_grad
+    grad_min_dist_sq = 0.5 * (1 / min_dist)
+    grad_dist_sq = grad_min_dist_sq * grad_min_dist
 
     min_dist_sq_indices = tl.load(min_dist_sq_indices_ptr + xoffset, xmask, other=0)
 
     out_ptrs = xoffset * rnumel + min_dist_sq_indices
-    tl.store(dist_sq_grad_ptr + out_ptrs, dist_sq_grad, xmask)
+    tl.store(grad_dist_sq_ptr + out_ptrs, grad_dist_sq, xmask)
 
 
 class KoleMinDist(torch.autograd.Function):
@@ -144,26 +143,26 @@ class KoleMinDist(torch.autograd.Function):
         return min_dist
 
     @staticmethod
-    def backward(ctx, min_dist_grad):
+    def backward(ctx, grad_min_dist):
         min_dist, min_dist_indices = ctx.saved_tensors
         N = min_dist.shape[0]
 
         try:
-            assert_size_stride(min_dist_grad, (N,), (1,))
+            assert_size_stride(grad_min_dist, (N,), (1,))
         except AssertionError:
-            min_dist_grad = min_dist_grad.clone()
-            assert_size_stride(min_dist_grad, (N,), (1,))
+            grad_min_dist = grad_min_dist.clone()
+            assert_size_stride(grad_min_dist, (N,), (1,))
 
         assert_size_stride(min_dist, (N,), (1,))
         assert_size_stride(min_dist_indices, (N,), (1,))
 
-        dist_sq_grad = torch.zeros((N, N), device="cuda", dtype=torch.float32)
+        grad_dist_sq = torch.zeros((N, N), device="cuda", dtype=torch.float32)
         xnumel = N
         rnumel = N
 
         _kole_min_dist_backward[ctx.g](
-            min_dist_grad,
-            dist_sq_grad,
+            grad_min_dist,
+            grad_dist_sq,
             min_dist,
             min_dist_indices,
             xnumel,
@@ -172,7 +171,7 @@ class KoleMinDist(torch.autograd.Function):
             num_warps=ctx.num_warps,
         )
 
-        return dist_sq_grad, None
+        return grad_dist_sq
 
 
 def kole_min_dist_triton(dist_sq):
