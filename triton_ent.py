@@ -122,7 +122,7 @@ class KoleEntropy(torch.autograd.Function):
             D,
             xnumel,
             # Meta parameters
-            XBLOCK=ctx.XBLOCK,
+            XBLOCK=XBLOCK,
             num_warps=ctx.num_warps,
         )
         del grad_entropy
@@ -175,8 +175,8 @@ if __name__ == "__main__":
 
     print("Testing triton function...")
     for i in range(2, 12):
-        N = 32
-        D = 2**i
+        N = 2**i
+        D = 8
 
         x_triton = torch.randn(N, N, device="cuda", requires_grad=True)
         x_torch = x_triton.detach().clone()
@@ -188,8 +188,7 @@ if __name__ == "__main__":
         loss_torch = kole_entropy(x_torch)
         loss_torch.backward()
 
-        assert torch.allclose(loss_triton, loss_torch), (loss_triton, loss_torch)
-        assert torch.allclose(x_triton.grad, x_torch.grad), (x_triton.grad, x_torch.grad)
-        print(f"input {2**i}: good")
-
+        assert torch.allclose(loss_triton, loss_torch), (loss_triton, loss_torch, loss_triton - loss_torch)
+        assert torch.allclose(x_triton.grad, x_torch.grad), (x_triton.grad, x_torch.grad, x_triton.grad - x_torch.grad)
+        print(f"N,D: {N},{D} -> good")
     print("Triton function successfully tested!")

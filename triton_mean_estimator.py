@@ -120,7 +120,7 @@ class KoleMeanEstimator(torch.autograd.Function):
             D,
             xnumel,
             # Meta parameters
-            XBLOCK=ctx.XBLOCK,
+            XBLOCK=XBLOCK,
             num_warps=ctx.num_warps,
         )
 
