@@ -1,0 +1,13 @@
+# https://docs.astral.sh/ruff/settings/
+
+[tool.ruff]
+# Set the maximum line length to 79.
+line-length = 120
+exclude = ["outputs"]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = [
+    "F401", # imported but unused
+    "E402", # Module level import not at top of file
+]

@@ -51,16 +51,16 @@ endif
 # CI
 ###
 lint:
-	ruff check .
+	ruff check . cuda
 
 lint-fix:
-	ruff check . --fix
+	ruff check . cuda --fix
 
 lint-fix-unsafe:
-	ruff check . --fix --unsafe-fixes
+	ruff check . cuda --fix --unsafe-fixes
 
 format:
-	ruff format .
+	ruff format . cuda
 
 
 .PHONY: lint lint-fix lint-fix-unsafe format

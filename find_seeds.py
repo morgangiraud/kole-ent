@@ -17,9 +17,7 @@ except FileExistsError:
 nb_density = 9
 
 nb_samples = 2**10
-init_sample = D.Uniform(torch.tensor([0.0, 0.0]), torch.tensor([1.0, 1.0])).sample(
-    (nb_samples,)
-)
+init_sample = D.Uniform(torch.tensor([0.0, 0.0]), torch.tensor([1.0, 1.0])).sample((nb_samples,))
 
 init_losses = []
 for i in range(1000):

@@ -1,36 +1,71 @@
+from typing import Tuple
 import os
 import random
 import numpy as np
 import torch
 from torch import distributions as D
 
-
-def ent_hat(X):
-    """
-    Kozachenko-Leonenko estimator
-    More here: https://arxiv.org/abs/1602.07440
-    """
-    N, D = X.shape
-
-    dist_sq = torch.sum((X[:, None, :] - X[None, :, :]) ** 2, axis=-1)
-
-    dist_sq[torch.eye(N, dtype=torch.bool, device=X.device)] = torch.inf
-
-    min_dist = torch.sqrt(torch.min(dist_sq, 1).values)
-
-    return torch.mean(torch.log((N - 1) * min_dist**D))
+# CUDA compute capabilities
+# https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#compute-capabilities
+# See Table 18
+GRID_MAX_DIM_X_SIZE = 2**31 - 1
+GRID_MAX_DIM_Y_SIZE = 2**16 - 1
+GRID_MAX_DIM_Z_SIZE = 2**16 - 1
+BLOCK_MAX_NB_THREADS = 1024
+BLOCK_MAX_DIM_X_SIZE = 1024  # Number of threads in each dim
+BLOCK_MAX_DIM_Y_SIZE = 1024
+BLOCK_MAX_DIM_Z_SIZE = 64
+WARP_SIZE = 32
+NB_REGISTERS_PER_SM = 64_000
 
 
-def build_kl_hat(p, compile=True):
+def get_sm_limits(cuda_capa: Tuple[int, int]):
+    match cuda_capa:
+        case (5, 0) | (5, 2) | (5, 3) | (6, 0) | (6, 1) | (6, 2) | (7, 0) | (7, 2) | (8, 0) | (9, 0):
+            return {
+                "SM_MAX_NB_BLOCKS": 32,
+                "SM_MAX_NB_WARPS": 64,
+                "SM_MAX_NB_THREADS": 2048,
+            }
+        case (7, 5):
+            return {
+                "SM_MAX_NB_BLOCKS": 16,
+                "SM_MAX_NB_WARPS": 32,
+                "SM_MAX_NB_THREADS": 1024,
+            }
+        case (8, 6) | (8, 7):
+            return {
+                "SM_MAX_NB_BLOCKS": 16,
+                "SM_MAX_NB_WARPS": 48,
+                "SM_MAX_NB_THREADS": 1536,
+            }
+        case (8, 9):
+            return {
+                "SM_MAX_NB_BLOCKS": 24,
+                "SM_MAX_NB_WARPS": 48,
+                "SM_MAX_NB_THREADS": 1536,
+            }
+        case _:
+            raise ValueError(f"Cuda capabilities {cuda_capa} unknown")
+
+
+def build_kl_hat(p, compile=True, use_triton=True):
     """
     D_kl(p||q) = H(p, q) - H(q)
     X ~ q
     """
+    if torch.cuda.is_available() and use_triton:
+        from triton_ent import kole_entropy
 
-    def kl_hat(X):
-        neg_log_p_X = -p.log_prob(X)
-        # We approximate q by the uniform distribution
-        return torch.mean(neg_log_p_X) - ent_hat(X)
+        def kl_hat(X):
+            # We approximate q by the uniform distribution
+            return torch.mean(-p.log_prob(X)) - kole_entropy(X)
+    else:
+        from ent import kole_entropy
+
+        def kl_hat(X):
+            # We approximate q by the uniform distribution
+            return torch.mean(-p.log_prob(X)) - kole_entropy(X)
 
     if compile is True:
         return torch.compile(kl_hat)
