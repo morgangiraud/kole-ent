@@ -55,13 +55,13 @@ def build_kl_hat(p, compile=True, use_triton=True):
     X ~ q
     """
     if torch.cuda.is_available() and use_triton:
-        from triton_ent import kole_entropy
+        from triton_kole_entropy import kole_entropy
 
         def kl_hat(X):
             # We approximate q by the uniform distribution
             return torch.mean(-p.log_prob(X)) - kole_entropy(X)
     else:
-        from ent import kole_entropy
+        from kole_entropy import kole_entropy
 
         def kl_hat(X):
             # We approximate q by the uniform distribution

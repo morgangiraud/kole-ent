@@ -4,7 +4,7 @@ i.e.: TORCH_LOGS=output_code python file.py
 """
 import torch
 
-from ent import compute_dist_sq
+from kole_entropy import compute_dist_sq
 
 opt_fn = torch.compile(compute_dist_sq)
 

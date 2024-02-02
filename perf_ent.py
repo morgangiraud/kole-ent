@@ -1,8 +1,8 @@
 import torch
 import triton
 
-from ent import kole_entropy
-from triton_ent import kole_entropy_triton
+from kole_entropy import kole_entropy
+from triton_kole_entropy import kole_entropy_triton
 
 
 @triton.testing.perf_report(

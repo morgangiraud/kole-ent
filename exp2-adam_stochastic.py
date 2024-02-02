@@ -79,7 +79,8 @@ nb_iter = 1500 * 2
 t0 = time.time()
 
 bs = 32
-nb_epoch = 1 + (nb_iter - 1) // bs
+nb_iter_per_epoch = 1 + (nb_samples - 1) // bs
+nb_epoch = 1 + (nb_iter - 1) // nb_iter_per_epoch
 t = 0
 kl_loss_sma_k = 30
 kl_loss_sma_data = deque([])
@@ -112,7 +113,7 @@ for i in range(nb_epoch):
             kl_loss_sma += (kl_loss_val - el_removed) / kl_loss_sma_k
         t += 1
 
-    print(f"{i}/{nb_epoch} - kl_loss_sma: {kl_loss_sma}")
+    print(f"{i + 1}/{nb_epoch} - kl_loss_sma: {kl_loss_sma}")
 print(f"Time taken by the optimization process: {time.time() - t0}")
 
 # Creating the animation

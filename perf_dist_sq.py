@@ -1,7 +1,7 @@
 import torch
 import triton
 
-from ent import kole_dist_sq
+from kole_entropy import kole_dist_sq
 from triton_dist_sq import kole_dist_sq_triton
 
 
@@ -29,6 +29,7 @@ from triton_dist_sq import kole_dist_sq_triton
 def benchmark(N, D, provider):
     x = torch.randn(N, D, device="cuda", dtype=torch.float32)
     quantiles = [0.5, 0.2, 0.8]
+
     if provider == "torch-eager":
         ms, min_ms, max_ms = triton.testing.do_bench(lambda: kole_dist_sq(x), quantiles=quantiles)
     if provider == "torch-compile":

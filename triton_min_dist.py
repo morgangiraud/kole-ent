@@ -2,7 +2,7 @@ import torch
 import triton
 import triton.language as tl
 
-from ent import kole_min_dist
+from kole_entropy import kole_min_dist
 
 
 assert_size_stride = torch._C._dynamo.guards.assert_size_stride

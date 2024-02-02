@@ -3,7 +3,7 @@ import triton
 import triton.language as tl
 
 from utils import BLOCK_MAX_NB_THREADS
-from ent import kole_mean_estimator
+from kole_entropy import kole_mean_estimator
 
 
 assert_size_stride = torch._C._dynamo.guards.assert_size_stride

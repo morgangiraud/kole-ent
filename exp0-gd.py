@@ -89,8 +89,8 @@ for i in range(nb_epoch):
     optimizer.step()
     scheduler.step()
 
-    if i % 100 == 0:
-        print(f"{i}/{nb_epoch} - kl_loss: {kl_loss.item()}")
+    if i == 0 or (i + 1) % 100 == 0:
+        print(f"{i + 1}/{nb_epoch} - kl_loss: {kl_loss.item()}")
 print(f"Time taken by the optimization process: {time.time() - t0}")
 
 # Creating the animation

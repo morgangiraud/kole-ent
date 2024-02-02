@@ -1,7 +1,7 @@
 import torch
 import triton
 
-from ent import kole_min_dist
+from kole_entropy import kole_min_dist
 from triton_min_dist import kole_min_dist_triton
 
 

@@ -79,18 +79,30 @@ nb_iter = 1500 * 2
 t0 = time.time()
 
 bs = 32
-nb_epoch = 1 + (nb_iter - 1) // bs
+# We make sure to keep 3000 iterations
+nb_iter_per_epoch1 = 1 + (nb_samples - 1) // bs
+nb_iter_per_epoch2 = 1 + (nb_samples - 1) // (2 * bs)
+nb_iter_per_epoch3 = 1 + (nb_samples - 1) // (2 * 2 * bs)
+nb_epoch = 1 + (1000 - 1) // nb_iter_per_epoch1
+nb_epoch += 1 + (1000 - 1) // nb_iter_per_epoch2
+nb_epoch += 1 + (1000 - 1) // nb_iter_per_epoch3
 t = 0
+bs_increase_count = 0
 kl_loss_sma_k = 30
 kl_loss_sma_data = deque([])
 kl_loss_sma = 0.0
 for i in range(nb_epoch):
     stoch_idx = torch.randperm(nb_samples, device=device)
 
-    if scheduler._step_count > scheduler.milestones[0]:
-        bs = 64
-    if scheduler._step_count > scheduler.milestones[1]:
-        bs = 128
+    # Batch size increase
+    if scheduler._step_count > sorted(scheduler.milestones)[0] and bs_increase_count == 0:
+        bs *= 2
+        bs_increase_count += 1
+        print(f"increasing batch size -> {bs}")
+    if scheduler._step_count > sorted(scheduler.milestones)[1] and bs_increase_count == 1:
+        bs *= 2
+        bs_increase_count += 1
+        print(f"increasing batch size -> {bs}")
 
     for idx_start in range(0, nb_samples, bs):
         cur_bs = min(nb_samples - idx_start, bs)
@@ -117,7 +129,7 @@ for i in range(nb_epoch):
             kl_loss_sma += (kl_loss_val - el_removed) / kl_loss_sma_k
         t += 1
 
-    print(f"{i}/{nb_epoch} - kl_loss_sma: {kl_loss_sma}")
+    print(f"{i + 1}/{nb_epoch} - kl_loss_sma: {kl_loss_sma}")
 print(f"Time taken by the optimization process: {time.time() - t0}")
 
 # Creating the animation

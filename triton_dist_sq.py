@@ -6,7 +6,7 @@ import triton
 import triton.language as tl
 
 from utils import BLOCK_MAX_NB_THREADS
-from ent import kole_dist_sq
+from kole_entropy import kole_dist_sq
 
 
 assert_size_stride = torch._C._dynamo.guards.assert_size_stride

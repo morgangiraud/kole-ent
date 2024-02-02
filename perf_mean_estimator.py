@@ -1,7 +1,7 @@
 import torch
 import triton
 
-from ent import kole_mean_estimator
+from kole_entropy import kole_mean_estimator
 from triton_mean_estimator import kole_mean_estimator_triton
 
 

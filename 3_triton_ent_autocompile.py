@@ -4,7 +4,7 @@ i.e.: TORCH_LOGS=output_code python file.py
 """
 import torch
 
-from ent import ent_hat
+from kole_entropy import ent_hat
 
 
 opt_fn = torch.compile(ent_hat)

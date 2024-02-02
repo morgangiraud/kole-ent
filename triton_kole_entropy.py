@@ -4,7 +4,7 @@ import triton
 import triton.language as tl
 
 from utils import BLOCK_MAX_NB_THREADS
-from ent import kole_entropy
+from kole_entropy import kole_entropy
 from triton_dist_sq import _kole_dist_sq_forward, _kole_dist_sq_backward
 from triton_min_dist import _kole_min_dist_forward, _kole_min_dist_backward
 from triton_mean_estimator import _kole_mean_estimator_forward, _kole_mean_estimator_backward
@@ -178,7 +178,7 @@ if __name__ == "__main__":
         N = 2**i
         D = 8
 
-        x_triton = torch.randn(N, N, device="cuda", requires_grad=True)
+        x_triton = torch.randn(N, D, device="cuda", requires_grad=True)
         x_torch = x_triton.detach().clone()
         x_torch.requires_grad = True
 
@@ -191,4 +191,5 @@ if __name__ == "__main__":
         assert torch.allclose(loss_triton, loss_torch), (loss_triton, loss_torch, loss_triton - loss_torch)
         assert torch.allclose(x_triton.grad, x_torch.grad), (x_triton.grad, x_torch.grad, x_triton.grad - x_torch.grad)
         print(f"N,D: {N},{D} -> good")
+
     print("Triton function successfully tested!")

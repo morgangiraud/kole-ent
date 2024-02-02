@@ -16,8 +16,8 @@ def compute_min_dist(X):
 def kole_min_dist(dist_sq_X):
     N = dist_sq_X.shape[0]
 
-    dist_sq_X[torch.eye(N, dtype=torch.bool, device=dist_sq_X.device)] = torch.inf  # N, N
-    min_values = torch.min(dist_sq_X, 1).values  # N
+    inf_diag = torch.diag(torch.ones(N, device=dist_sq_X.device) * torch.inf)
+    min_values = torch.min(dist_sq_X + inf_diag, 1).values  # N
     min_dist = torch.sqrt(min_values)
 
     return min_dist
