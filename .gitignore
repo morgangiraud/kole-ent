@@ -6,3 +6,5 @@ __pycache__
 
 # Project
 tmp
+cuda/*.o
+cuda/vector_add

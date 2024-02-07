@@ -127,6 +127,7 @@ dependencies:
   - nccl=2.19.4.1=h3a97aeb_0
   - ncurses=6.4=h59595ed_2
   - networkx=3.2.1=pyhd8ed1ab_0
+  - ninja=1.11.1=h924138e_0
   - nspr=4.35=h27087fc_0
   - nss=3.97=h1d7d5a4_0
   - numpy=1.26.3=py310hb13e2d6_0

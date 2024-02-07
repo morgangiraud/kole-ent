@@ -1,0 +1,1 @@
+torch::Tensor vector_add(torch::Tensor a, torch::Tensor b, int N);
